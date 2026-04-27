@@ -10,10 +10,11 @@ from so101_nexus_mujoco import cli as mujoco_cli
 def test_build_parser_has_teleop_subcommand():
     parser = mujoco_cli._build_parser()
     # Dry-parse an allowed teleop invocation.
-    args = parser.parse_args(["teleop", "--leader-port", "/dev/null"])
+    args = parser.parse_args(["teleop", "--leader-port", "/dev/null", "--controller", "keyboard"])
     assert args.command == "teleop"
     assert args.leader_port == "/dev/null"
     assert args.leader_id == "so101_leader"  # default
+    assert args.controller == "keyboard"
 
 
 def test_build_parser_requires_subcommand():

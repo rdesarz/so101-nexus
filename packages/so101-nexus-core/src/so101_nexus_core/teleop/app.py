@@ -19,6 +19,11 @@ if TYPE_CHECKING:
     from so101_nexus_core.teleop.recorder import _WritableTextStream
 
 from so101_nexus_core.env_ids import Backend, env_ids_for_backend
+from so101_nexus_core.teleop.controllers import (
+    KEYBOARD_HELP,
+    ControllerKind,
+    get_controller,
+)
 from so101_nexus_core.teleop.dataset import (
     OVERHEAD_KEY,
     WRIST_KEY,
@@ -30,7 +35,6 @@ from so101_nexus_core.teleop.leader import (
     DEFAULT_WRIST_ROLL_OFFSET_DEG,
     ROBOT_JOINT_NAMES,
     check_robot_env_mismatch,
-    get_leader,
     import_backend_for_env_id,
 )
 from so101_nexus_core.teleop.recorder import (
@@ -67,22 +71,47 @@ def _build_field_selection(field_selection_value: list[str]) -> FieldSelection:
 # ---------------------------------------------------------------------------
 
 
+def _connect_controller(
+    controller_type: ControllerKind,
+    robot_type: str,
+    joint_names: tuple[str, ...],
+    leader_port: str,
+    leader_id: str,
+):
+    """Connect and return the selected controller, or raise RuntimeError."""
+    if controller_type == "leader":
+        print(f"Connecting leader arm on {leader_port} (id={leader_id})...")
+    elif controller_type == "keyboard":
+        print("Starting keyboard controller...")
+    else:
+        print(f"Starting {controller_type} controller...")
+
+    controller = get_controller(controller_type, robot_type, joint_names, leader_port, leader_id)
+    try:
+        controller.connect()
+    except Exception as exc:
+        if controller_type == "leader":
+            raise RuntimeError(
+                f"Failed to connect on {leader_port}: {exc}\n"
+                "Is the arm plugged in? Run 'lerobot-find-port' to list ports."
+            ) from exc
+        raise RuntimeError(f"Failed to start {controller_type} controller: {exc}") from exc
+    return controller
+
+
 def _connect_leader(robot_type: str, leader_port: str, leader_id: str):
     """Connect and return the leader arm, or raise RuntimeError."""
-    print(f"Connecting leader arm on {leader_port} (id={leader_id})...")
-    leader = get_leader(robot_type, leader_port, leader_id)
-    try:
-        leader.connect()
-    except Exception as exc:
-        raise RuntimeError(
-            f"Failed to connect on {leader_port}: {exc}\n"
-            "Is the arm plugged in? Run 'lerobot-find-port' to list ports."
-        ) from exc
-    return leader
+    return _connect_controller(
+        "leader",
+        robot_type,
+        ROBOT_JOINT_NAMES[robot_type],
+        leader_port,
+        leader_id,
+    )
 
 
-def _create_dataset(repo_id: str, fps: int, robot_type: str, features: dict, leader):
-    """Create and return a LeRobotDataset, disconnecting *leader* on failure."""
+def _create_dataset(repo_id: str, fps: int, robot_type: str, features: dict, controller):
+    """Create and return a LeRobotDataset, disconnecting *controller* on failure."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     try:
@@ -93,7 +122,7 @@ def _create_dataset(repo_id: str, fps: int, robot_type: str, features: dict, lea
             features=features,
         )
     except Exception as exc:
-        leader.disconnect()
+        controller.disconnect()
         raise RuntimeError(f"Failed to create dataset: {exc}") from exc
 
 
@@ -101,6 +130,7 @@ def _run_init_worker(
     session: dict,
     init_state: dict,
     leader_port: str,
+    controller_type: ControllerKind,
     env_id: str,
     robot_type: str,
     leader_id: str,
@@ -119,12 +149,19 @@ def _run_init_worker(
     joint_names = ROBOT_JOINT_NAMES[robot_type]
     try:
         import_backend_for_env_id(env_id)
-        leader = _connect_leader(robot_type, leader_port, leader_id)
+        controller = _connect_controller(
+            controller_type,
+            robot_type,
+            joint_names,
+            leader_port,
+            leader_id,
+        )
         print("Creating LeRobot dataset...")
         features = build_features(field_selection, joint_names, wrist_wh, overhead_wh)
-        dataset = _create_dataset(repo_id, fps, robot_type, features, leader)
+        dataset = _create_dataset(repo_id, fps, robot_type, features, controller)
         session.update(
-            leader=leader,
+            controller=controller,
+            controller_type=controller_type,
             dataset=dataset,
             state=RecordingState(num_episodes=num_episodes),
             joint_names=joint_names,
@@ -156,6 +193,7 @@ def _cb_start_init(
     init_state: dict,
     leader_port: str,
     leader_id_default: str,
+    controller_type: str,
     env_id: str,
     robot_type: str,
     leader_id: str,
@@ -183,6 +221,7 @@ def _cb_start_init(
         raise gr.Error("Max Steps must be at least 1.")
     repo_id_value = (repo_id or "").strip() or _default_repo_id(env_id)
     leader_id_value = (leader_id or "").strip() or leader_id_default
+    controller_type_value = cast(ControllerKind, controller_type)
     field_selection = _build_field_selection(field_selection_value)
 
     init_state.update(
@@ -204,6 +243,7 @@ def _cb_start_init(
             session,
             init_state,
             leader_port,
+            controller_type_value,
             env_id,
             robot_type,
             leader_id_value,
@@ -294,7 +334,7 @@ def _cb_start_recording(session: dict):
         args=(
             s,
             session["env_id"],
-            session["leader"],
+            session["controller"],
             session["joint_names"],
             session["fps"],
             session["max_steps"],
@@ -510,7 +550,7 @@ def _cb_finalize_and_close(session: dict):
     except Exception as exc:
         raise gr.Error(f"Failed to finalize dataset: {exc}") from exc
     with contextlib.suppress(Exception):
-        session["leader"].disconnect()
+        session["controller"].disconnect()
     return "Session finalized. You can close this tab."
 
 
@@ -524,6 +564,7 @@ def _build_setup_screen(
     all_env_ids: list[str],
     default_leader_id: str,
     wrist_roll_offset: float,
+    default_controller: str = "leader",
 ):
     """Build the Configure step contents and return all input components."""
     gr.Markdown("### Environment & Robot")
@@ -533,6 +574,11 @@ def _build_setup_screen(
         label="Environment",
     )
     with gr.Row():
+        controller_input = gr.Radio(
+            choices=["leader", "keyboard", "gamepad"],
+            value=default_controller,
+            label="Controller",
+        )
         robot_type_input = gr.Radio(choices=["so100", "so101"], value="so101", label="Robot Type")
         action_space_input = gr.Radio(
             choices=["joint_pos", "joint_pos_delta"],
@@ -541,6 +587,7 @@ def _build_setup_screen(
         )
 
     gr.Markdown("### Recording")
+    gr.Markdown(KEYBOARD_HELP)
     with gr.Row():
         num_episodes_input = gr.Number(value=5, precision=0, label="Number of Episodes")
         fps_input = gr.Slider(minimum=1, maximum=60, value=30, step=1, label="FPS")
@@ -589,6 +636,7 @@ def _build_setup_screen(
     return (
         init_btn,
         env_id_input,
+        controller_input,
         robot_type_input,
         num_episodes_input,
         leader_id_input,
@@ -787,6 +835,11 @@ def main(
         parser.add_argument("--leader-port", type=str, default="/dev/ttyACM0")
         parser.add_argument("--leader-id", type=str, default="so101_leader")
         parser.add_argument(
+            "--controller",
+            choices=["leader", "keyboard", "gamepad"],
+            default="leader",
+        )
+        parser.add_argument(
             "--wrist-roll-offset-deg",
             type=float,
             default=DEFAULT_WRIST_ROLL_OFFSET_DEG,
@@ -795,6 +848,7 @@ def main(
 
     leader_port: str = getattr(args, "leader_port", "/dev/ttyACM0")
     leader_id_default: str = getattr(args, "leader_id", "so101_leader")
+    controller_default: str = getattr(args, "controller", "leader")
     wrist_roll_offset: float = getattr(args, "wrist_roll_offset_deg", DEFAULT_WRIST_ROLL_OFFSET_DEG)
 
     session: dict = {}
@@ -820,6 +874,7 @@ def main(
                 (
                     init_btn,
                     env_id_input,
+                    controller_input,
                     robot_type_input,
                     num_episodes_input,
                     leader_id_input,
@@ -834,7 +889,13 @@ def main(
                     max_steps_input,
                     countdown_input,
                     field_selection_input,
-                ) = _build_setup_screen(gr, all_env_ids, leader_id_default, wrist_roll_offset)
+                ) = _build_setup_screen(
+                    gr,
+                    all_env_ids,
+                    leader_id_default,
+                    wrist_roll_offset,
+                    controller_default,
+                )
 
             with gr.Step("Initialize", id=1):
                 init_log, retry_btn, init_timer = _build_init_step(gr)
@@ -869,6 +930,7 @@ def main(
 
         init_inputs = [
             env_id_input,
+            controller_input,
             robot_type_input,
             leader_id_input,
             fps_input,

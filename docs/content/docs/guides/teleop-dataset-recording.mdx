@@ -4,9 +4,9 @@ description: Record demonstration datasets by teleoperating a simulated robot wi
 ---
 
 SO101-Nexus ships with a Gradio-based teleop recorder in the core package.
-You drive a simulated robot with a physical SO-100 or SO-101 leader arm,
-and demonstrations are saved as LeRobot v3 datasets ready to push to the
-HuggingFace Hub.
+You drive a simulated robot with a physical SO-100 or SO-101 leader arm or
+with the keyboard controller, and demonstrations are saved as LeRobot v3
+datasets ready to push to the HuggingFace Hub.
 
 ## Quickstart with uvx
 
@@ -82,6 +82,7 @@ only takes connection-level options.
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
+| `--controller` | `str` | `leader` | Controller backend: `leader`, `keyboard`, or reserved `gamepad` |
 | `--leader-port` | `str` | `/dev/ttyACM0` | Serial port of the leader arm |
 | `--leader-id` | `str` | `so101_leader` | Device identifier for the leader arm |
 | `--wrist-roll-offset-deg` | `float` | `-90.0` | Wrist roll offset in degrees |

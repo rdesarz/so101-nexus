@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Protocol
 import numpy as np
 
 if TYPE_CHECKING:
-    from so101_nexus_core.teleop.leader import LeaderProtocol
+    from so101_nexus_core.teleop.controllers import ControllerProtocol
 
 
 class _WritableTextStream(Protocol):
@@ -86,12 +86,12 @@ class RecordingState:
         self.recording_finished = False
 
 
-def convert_leader_action(
+def convert_controller_action(
     action: dict,
     joint_names: tuple[str, ...],
     wrist_roll_offset_deg: float,
 ) -> np.ndarray:
-    """Convert leader arm joint readings (degrees) to radians."""
+    """Convert controller joint readings (degrees) to radians."""
     converted: list[float] = []
     wrist_roll_offset_rad = np.deg2rad(wrist_roll_offset_deg)
     for name in joint_names:
@@ -100,6 +100,9 @@ def convert_leader_action(
             value += wrist_roll_offset_rad
         converted.append(value)
     return np.array(converted, dtype=np.float64)
+
+
+convert_leader_action = convert_controller_action
 
 
 def compute_delta_actions(actions: list[np.ndarray]) -> list[np.ndarray]:
@@ -113,7 +116,7 @@ def compute_delta_actions(actions: list[np.ndarray]) -> list[np.ndarray]:
 def recording_thread(
     state: RecordingState,
     env_id: str,
-    leader: LeaderProtocol,
+    controller: ControllerProtocol,
     joint_names: tuple[str, ...],
     fps: int,
     max_steps: int,
@@ -138,9 +141,9 @@ def recording_thread(
         **_recording_env_kwargs(env_id, wrist_wh, overhead_wh),
     )
     try:
-        leader_action = leader.get_action()
-        init_qpos = convert_leader_action(
-            leader_action,
+        controller_action = controller.get_action()
+        init_qpos = convert_controller_action(
+            controller_action,
             joint_names,
             wrist_roll_offset_deg=wrist_roll_offset_deg,
         )
@@ -157,9 +160,9 @@ def recording_thread(
             if len(state.episode_actions) >= max_steps:
                 break
 
-            leader_action = leader.get_action()
-            action = convert_leader_action(
-                leader_action,
+            controller_action = controller.get_action()
+            action = convert_controller_action(
+                controller_action,
                 joint_names,
                 wrist_roll_offset_deg=wrist_roll_offset_deg,
             )
@@ -171,7 +174,7 @@ def recording_thread(
                 wrist_image = obs.get("wrist_camera")
                 overhead_image = obs.get("overhead_camera")
 
-            # The leader arm action IS the observation.state for the dataset:
+            # The controller action IS the observation.state for the dataset:
             # it matches what real robot joint encoders would report.
             state.episode_actions.append(action.astype(np.float32))
             state.episode_states.append(action.astype(np.float32))

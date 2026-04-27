@@ -15,9 +15,11 @@ import pytest
 
 from so101_nexus_core.teleop.app import (
     _build_field_selection,
+    _connect_controller,
     _connect_leader,
     _create_dataset,
     _progress_text,
+    _run_init_worker,
 )
 from so101_nexus_core.teleop.dataset import OVERHEAD_KEY, WRIST_KEY
 
@@ -61,10 +63,10 @@ def test_connect_leader_wraps_connect_failure_in_runtime_error(monkeypatch) -> N
         def connect(self) -> None:
             raise OSError("permission denied")
 
-    def _fake_get_leader(_robot_type, _port, _leader_id):
+    def _fake_get_controller(_controller_type, _robot_type, _joint_names, _port, _leader_id):
         return _FailingLeader()
 
-    monkeypatch.setattr("so101_nexus_core.teleop.app.get_leader", _fake_get_leader)
+    monkeypatch.setattr("so101_nexus_core.teleop.app.get_controller", _fake_get_controller)
 
     with pytest.raises(RuntimeError, match="Failed to connect on /dev/ttyACM0") as excinfo:
         _connect_leader("so101", "/dev/ttyACM0", "leader_a")
@@ -82,7 +84,7 @@ def test_connect_leader_returns_connected_leader_on_success(monkeypatch) -> None
             state["connected"] = True
 
     monkeypatch.setattr(
-        "so101_nexus_core.teleop.app.get_leader",
+        "so101_nexus_core.teleop.app.get_controller",
         lambda *_a, **_kw: _OkLeader(),
     )
 
@@ -90,6 +92,31 @@ def test_connect_leader_returns_connected_leader_on_success(monkeypatch) -> None
 
     assert state["connected"] is True
     assert isinstance(leader, _OkLeader)
+
+
+def test_connect_controller_keyboard_success(monkeypatch) -> None:
+    """The generalized controller path starts the selected controller."""
+    state = {"connected": False}
+
+    class _Keyboard:
+        def connect(self) -> None:
+            state["connected"] = True
+
+    monkeypatch.setattr(
+        "so101_nexus_core.teleop.app.get_controller",
+        lambda *_a, **_kw: _Keyboard(),
+    )
+
+    controller = _connect_controller(
+        "keyboard",
+        "so101",
+        ("shoulder_pan",),
+        "/dev/ttyACM0",
+        "leader_a",
+    )
+
+    assert state["connected"] is True
+    assert isinstance(controller, _Keyboard)
 
 
 def test_create_dataset_disconnects_leader_on_failure(monkeypatch) -> None:
@@ -153,3 +180,55 @@ def test_create_dataset_returns_dataset_on_success(monkeypatch) -> None:
     assert seen["fps"] == 30
     assert seen["robot_type"] == "so101"
     assert seen["features"] == {"action": {}}
+
+
+def test_run_init_worker_keyboard_initializes_session_without_hardware(monkeypatch) -> None:
+    """Smoke-test init wiring for keyboard control without touching real devices."""
+
+    class _Controller:
+        def connect(self) -> None:
+            pass
+
+        def disconnect(self) -> None:
+            pass
+
+    class _Dataset:
+        pass
+
+    monkeypatch.setattr("so101_nexus_core.teleop.app.import_backend_for_env_id", lambda _env_id: None)
+    monkeypatch.setattr(
+        "so101_nexus_core.teleop.app._connect_controller",
+        lambda *_args, **_kwargs: _Controller(),
+    )
+    monkeypatch.setattr(
+        "so101_nexus_core.teleop.app._create_dataset",
+        lambda *_args, **_kwargs: _Dataset(),
+    )
+
+    session: dict = {}
+    init_state: dict = {}
+    _run_init_worker(
+        session,
+        init_state,
+        leader_port="/dev/null",
+        controller_type="keyboard",
+        env_id="MuJoCoReach-v1",
+        robot_type="so101",
+        leader_id="unused",
+        fps=30,
+        wrist_wh=(64, 64),
+        overhead_wh=(64, 64),
+        repo_id="local/test",
+        num_episodes=1,
+        action_space="joint_pos",
+        max_steps=2,
+        countdown=0,
+        wrist_roll_offset_deg=0.0,
+        field_selection=_build_field_selection([]),
+    )
+
+    assert init_state["done"] is True
+    assert init_state.get("error") is None
+    assert session["controller_type"] == "keyboard"
+    assert session["env_id"] == "MuJoCoReach-v1"
+    assert isinstance(session["dataset"], _Dataset)

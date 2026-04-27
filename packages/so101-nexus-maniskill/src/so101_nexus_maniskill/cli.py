@@ -13,6 +13,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     teleop = sub.add_parser("teleop", help="Launch the Gradio teleop recorder")
+    teleop.add_argument(
+        "--controller",
+        choices=["leader", "keyboard", "gamepad"],
+        default="leader",
+        help="Controller used for teleoperation.",
+    )
     teleop.add_argument("--leader-port", type=str, default="/dev/ttyACM0")
     teleop.add_argument("--leader-id", type=str, default="so101_leader")
     teleop.add_argument(

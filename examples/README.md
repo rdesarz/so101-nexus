@@ -2,7 +2,7 @@
 
 ## Teleoperation (Dataset Recording)
 
-Record [LeRobot v3](https://huggingface.co/docs/lerobot/en/lerobot-dataset-v3) datasets by teleoperating an SO100 or SO101 leader arm to control a simulated follower in any SO101-Nexus environment. A Gradio web UI handles session configuration, live recording, and episode review.
+Record [LeRobot v3](https://huggingface.co/docs/lerobot/en/lerobot-dataset-v3) datasets by teleoperating an SO100 or SO101 leader arm, or the keyboard controller, to control a simulated follower in any SO101-Nexus environment. A Gradio web UI handles session configuration, live recording, and episode review.
 
 ### Prerequisites
 
@@ -38,6 +38,7 @@ uv run --package so101-nexus-mujoco --group teleop python examples/teleop.py \
 This opens a Gradio UI in your browser where you configure all recording parameters:
 
 - **Environment ID** — dropdown of all registered environments
+- **Controller** — physical leader arm or keyboard
 - **Robot Type** — SO100 or SO101 (warns if it mismatches the selected environment)
 - **HuggingFace Repo ID** — where the dataset will be stored
 - **FPS, Camera Width/Height** — recording resolution and framerate
@@ -60,8 +61,11 @@ Click **Initialize Session** to connect the leader arm and create the environmen
 
 | Argument | Default | Description |
 |---|---|---|
+| `--controller` | `leader` | Teleop controller: `leader`, `keyboard`, or reserved `gamepad` |
 | `--leader-port` | `/dev/ttyACM0` | Serial port for the leader arm |
 | `--leader-id` | `so101_leader` | Leader arm identifier |
+
+Keyboard controls are `q/a`, `w/s`, `e/d`, `r/f`, `t/g`, and `y/h` for the six SO101 joints. Press space to reset the keyboard joint targets.
 
 ---
 
