@@ -15,6 +15,7 @@ import pytest
 
 from so101_nexus_core.teleop.app import (
     _build_field_selection,
+    _cb_start_init,
     _connect_controller,
     _connect_leader,
     _create_dataset,
@@ -232,3 +233,70 @@ def test_run_init_worker_keyboard_initializes_session_without_hardware(monkeypat
     assert session["controller_type"] == "keyboard"
     assert session["env_id"] == "MuJoCoReach-v1"
     assert isinstance(session["dataset"], _Dataset)
+
+
+def test_start_init_callback_matches_gradio_input_order(monkeypatch) -> None:
+    """The Gradio input list passes env_id before controller_type."""
+
+    class _FakeGradio(types.ModuleType):
+        class Error(Exception):
+            pass
+
+        @staticmethod
+        def Walkthrough(**kwargs):
+            return kwargs
+
+    class _ImmediateThread:
+        def __init__(self, target, args, daemon=False):
+            self._target = target
+            self._args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self._target(*self._args)
+
+    seen = {}
+
+    def _fake_run_init_worker(
+        _session,
+        _init_state,
+        _leader_port,
+        controller_type,
+        env_id,
+        *_args,
+    ) -> None:
+        seen["controller_type"] = controller_type
+        seen["env_id"] = env_id
+
+    monkeypatch.setitem(sys.modules, "gradio", _FakeGradio("gradio"))
+    monkeypatch.setattr("so101_nexus_core.teleop.app.threading.Thread", _ImmediateThread)
+    monkeypatch.setattr(
+        "so101_nexus_core.teleop.app._run_init_worker",
+        _fake_run_init_worker,
+    )
+
+    result = _cb_start_init(
+        {},
+        {},
+        "/dev/null",
+        "default_leader",
+        "MuJoCoReach-v1",
+        "keyboard",
+        "so101",
+        "",
+        30,
+        64,
+        64,
+        64,
+        64,
+        "",
+        1,
+        "joint_pos",
+        2,
+        0,
+        0.0,
+        [],
+    )
+
+    assert result == {"selected": 1}
+    assert seen == {"controller_type": "keyboard", "env_id": "MuJoCoReach-v1"}
