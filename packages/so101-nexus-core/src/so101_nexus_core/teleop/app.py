@@ -308,8 +308,8 @@ def _cb_start_recording(session: dict):
     return (
         gr.update(value="Starting..."),
         gr.update(visible=False),
-        gr.update(visible=False),
-        gr.update(visible=False),
+        gr.update(visible=True),
+        gr.update(visible=True),
     )
 
 
@@ -327,8 +327,8 @@ def _cb_poll_recording(session: dict):
             gr.update(value="Get ready..."),
             gr.update(visible=False),
             gr.update(visible=True, value=f"**{s.countdown_value}**\n\nGet ready..."),
-            gr.update(visible=False),
-            gr.update(visible=False),
+            gr.update(),
+            gr.update(),
             gr.update(visible=False),
             gr.update(),
             gr.update(),
@@ -362,8 +362,8 @@ def _cb_poll_recording(session: dict):
             gr.update(value=status),
             gr.update(visible=False),
             gr.update(visible=False),
-            gr.update(value=wrist_frame, visible=True),
-            gr.update(value=overhead_frame, visible=True),
+            gr.update(value=wrist_frame),
+            gr.update(value=overhead_frame),
             gr.update(visible=True),
             gr.update(),
             gr.update(),
@@ -394,8 +394,8 @@ def _recording_finished_updates(session: dict, s: RecordingState, fps: int):
         gr.update(value="Recording complete."),
         gr.update(visible=False),
         gr.update(visible=False),
-        gr.update(visible=False),
-        gr.update(visible=False),
+        gr.update(visible="hidden"),
+        gr.update(visible="hidden"),
         gr.update(visible=False),
         gr.Walkthrough(selected=3),
         gr.update(value=video_path),
@@ -621,8 +621,8 @@ def _build_record_step(gr):
     start_btn = gr.Button("Start Recording", variant="primary")
     countdown_area = gr.Markdown("Get ready...", visible=False)
     with gr.Row():
-        wrist_feed = gr.Image(label="Wrist Camera", height=480, visible=False)
-        overhead_feed = gr.Image(label="Overhead Camera", height=480, visible=False)
+        wrist_feed = gr.Image(label="Wrist Camera", height=480, visible="hidden")
+        overhead_feed = gr.Image(label="Overhead Camera", height=480, visible="hidden")
     stop_btn = gr.Button("Stop Recording", variant="stop", visible=False)
     rec_timer = gr.Timer(value=0.1)
     return record_status, start_btn, countdown_area, wrist_feed, overhead_feed, stop_btn, rec_timer
