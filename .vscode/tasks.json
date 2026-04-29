@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "SO101 Teleop: keyboard",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "so101_nexus_mujoco.cli",
+        "teleop",
+        "--controller",
+        "keyboard"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}/packages/so101-nexus-core/src:${workspaceFolder}/packages/so101-nexus-mujoco/src",
+          "GRADIO_SERVER_PORT": "7960"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    }
+  ]
+}

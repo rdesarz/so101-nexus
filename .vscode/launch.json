@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug SO101 Teleop: keyboard",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/.venv/bin/so101-nexus-mujoco",
+      "args": [
+        "teleop",
+        "--controller",
+        "keyboard"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/packages/so101-nexus-core/src:${workspaceFolder}/packages/so101-nexus-mujoco/src",
+        "GRADIO_SERVER_PORT": "7960"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}
