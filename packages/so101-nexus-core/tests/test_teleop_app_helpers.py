@@ -11,10 +11,13 @@ from __future__ import annotations
 import sys
 import types
 
+import numpy as np
 import pytest
 
 from so101_nexus_core.teleop.app import (
     _build_field_selection,
+    _cb_approve_episode,
+    _cb_discard_episode,
     _cb_start_init,
     _connect_controller,
     _connect_leader,
@@ -23,6 +26,36 @@ from so101_nexus_core.teleop.app import (
     _run_init_worker,
 )
 from so101_nexus_core.teleop.dataset import OVERHEAD_KEY, WRIST_KEY
+from so101_nexus_core.teleop.recorder import RecordingState
+
+
+class _FakeGradio(types.ModuleType):
+    class Error(Exception):
+        pass
+
+    @staticmethod
+    def Walkthrough(**kwargs):
+        return {"Walkthrough": kwargs}
+
+    @staticmethod
+    def update(**kwargs):
+        return {"update": kwargs}
+
+
+class _Dataset:
+    def __init__(self) -> None:
+        self.frames: list[dict] = []
+        self.clear_calls = 0
+        self.save_calls = 0
+
+    def add_frame(self, frame: dict) -> None:
+        self.frames.append(frame)
+
+    def save_episode(self) -> None:
+        self.save_calls += 1
+
+    def clear_episode_buffer(self) -> None:
+        self.clear_calls += 1
 
 
 def test_progress_text_formats_episode_count() -> None:
@@ -31,6 +64,52 @@ def test_progress_text_formats_episode_count() -> None:
 
 def test_progress_text_formats_zero_completed() -> None:
     assert _progress_text(0, 10) == "**Episode 0 / 10**"
+
+
+def test_discard_episode_shows_start_button_for_rerecord(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "gradio", _FakeGradio("gradio"))
+
+    state = RecordingState(num_episodes=2)
+    state.episode_actions.append(np.array([1.0], dtype=np.float32))
+    dataset = _Dataset()
+
+    result = _cb_discard_episode({"state": state, "dataset": dataset})
+
+    assert result[0] == {"Walkthrough": {"selected": 2}}
+    assert result[1] == {
+        "update": {"value": "Episode discarded. Ready to re-record. Click the button below."}
+    }
+    assert result[2] == {"update": {"visible": True}}
+    assert result[3] == {"update": {"value": "**Episode 0 / 2**"}}
+    assert dataset.clear_calls == 1
+    assert state.episode_actions == []
+
+
+def test_approve_episode_shows_start_button_for_next_recording(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "gradio", _FakeGradio("gradio"))
+
+    state = RecordingState(num_episodes=2)
+    state.episode_actions.append(np.array([1.0], dtype=np.float32))
+    state.episode_states.append(np.array([1.0], dtype=np.float32))
+    dataset = _Dataset()
+    session = {
+        "state": state,
+        "dataset": dataset,
+        "action_space": "joint_pos",
+        "field_selection": _build_field_selection([]),
+    }
+
+    result = _cb_approve_episode(session)
+
+    assert result[0] == {"Walkthrough": {"selected": 2}}
+    assert result[1] == {
+        "update": {"value": "Episode saved! Ready to record the next one. Click the button below."}
+    }
+    assert result[2] == {"update": {"visible": True}}
+    assert result[3] == {"update": {"value": "**Episode 1 / 2**"}}
+    assert result[4] == {"update": {}}
+    assert dataset.save_calls == 1
+    assert len(dataset.frames) == 1
 
 
 def test_build_field_selection_all_keys() -> None:
