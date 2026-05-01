@@ -448,12 +448,14 @@ def _cb_approve_episode(session: dict):
         return (
             gr.Walkthrough(selected=4),
             gr.update(),
+            gr.update(),
             gr.update(value=progress),
             gr.update(value=info),
         )
     return (
         gr.Walkthrough(selected=2),
         gr.update(value="Episode saved! Ready to record the next one. Click the button below."),
+        gr.update(visible=True),
         gr.update(value=progress),
         gr.update(),
     )
@@ -469,6 +471,7 @@ def _cb_discard_episode(session: dict):
     return (
         gr.Walkthrough(selected=2),
         gr.update(value="Episode discarded. Ready to re-record. Click the button below."),
+        gr.update(visible=True),
         gr.update(value=_progress_text(s.episodes_completed, s.num_episodes)),
     )
 
@@ -736,11 +739,11 @@ def _wire_events(
     )
     approve_btn.click(
         fn=approve_episode,
-        outputs=[walkthrough, record_status, progress_status, done_info],
+        outputs=[walkthrough, record_status, start_btn, progress_status, done_info],
     )
     discard_btn.click(
         fn=discard_episode,
-        outputs=[walkthrough, record_status, progress_status],
+        outputs=[walkthrough, record_status, start_btn, progress_status],
     )
     push_btn.click(fn=push_to_hub, outputs=[done_status])
     finalize_btn.click(fn=finalize_and_close, outputs=[done_status])
