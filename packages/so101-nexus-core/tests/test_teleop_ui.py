@@ -72,3 +72,19 @@ def test_record_step_has_dual_camera_feeds() -> None:
     assert isinstance(overhead_feed, gr.Image)
     assert wrist_feed.label == "Wrist Camera"
     assert overhead_feed.label == "Overhead Camera"
+
+
+@pytest.mark.usefixtures("_require_gradio")
+def test_setup_screen_has_append_existing_dataset_checkbox() -> None:
+    """Verify the Configure step exposes append mode as a checkbox."""
+    import gradio as gr
+
+    from so101_nexus_core.env_ids import env_ids_for_backend
+    from so101_nexus_core.teleop.app import _build_setup_screen
+
+    with gr.Blocks():
+        components = _build_setup_screen(gr, env_ids_for_backend("mujoco"), "test_leader", -90.0)
+
+    append_existing_checkbox = components[7]
+    assert isinstance(append_existing_checkbox, gr.Checkbox)
+    assert append_existing_checkbox.label == "Append to existing Hugging Face dataset"

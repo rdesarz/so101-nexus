@@ -11,7 +11,8 @@ import argparse
 import contextlib
 import sys
 import threading
-from typing import TYPE_CHECKING, cast
+from pprint import pformat
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -50,6 +51,13 @@ from so101_nexus_core.teleop.session import (
 )
 
 _OPTIONAL_FIELD_CHOICES = [WRIST_KEY, OVERHEAD_KEY, "task"]
+_LEROBOT_DEFAULT_FEATURE_KEYS = {
+    "timestamp",
+    "frame_index",
+    "episode_index",
+    "index",
+    "task_index",
+}
 
 
 def _progress_text(completed: int, total: int) -> str:
@@ -64,6 +72,68 @@ def _build_field_selection(field_selection_value: list[str]) -> FieldSelection:
         overhead_image=OVERHEAD_KEY in field_selection_value,
         task="task" in field_selection_value,
     )
+
+
+def _normalize_feature_tree(value: Any) -> Any:
+    """Normalize feature metadata before comparing saved JSON to local tuples."""
+    if isinstance(value, tuple):
+        return [_normalize_feature_tree(item) for item in value]
+    if isinstance(value, list):
+        return [_normalize_feature_tree(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _normalize_feature_tree(item)
+            for key, item in value.items()
+            if key != "info"
+        }
+    return value
+
+
+def _recording_features_only(features: dict[str, Any]) -> dict[str, Any]:
+    """Remove LeRobot bookkeeping fields from a feature dictionary."""
+    return {
+        key: value
+        for key, value in features.items()
+        if key not in _LEROBOT_DEFAULT_FEATURE_KEYS
+    }
+
+
+def _validate_existing_dataset_compatible(
+    dataset,
+    fps: int,
+    robot_type: str,
+    features: dict[str, dict[str, Any]],
+) -> None:
+    """Raise if an existing LeRobot dataset cannot safely receive new episodes."""
+    meta = getattr(dataset, "meta", None)
+    dataset_robot_type = getattr(meta, "robot_type", None)
+    dataset_fps = getattr(dataset, "fps", None)
+    dataset_features = getattr(dataset, "features", None)
+
+    expected_features = _normalize_feature_tree(features)
+    actual_features = (
+        _normalize_feature_tree(_recording_features_only(dataset_features))
+        if isinstance(dataset_features, dict)
+        else None
+    )
+
+    mismatches: list[str] = []
+    if dataset_robot_type != robot_type:
+        mismatches.append(f"robot_type: expected {robot_type!r}, got {dataset_robot_type!r}")
+    if dataset_fps != fps:
+        mismatches.append(f"fps: expected {fps!r}, got {dataset_fps!r}")
+    if actual_features != expected_features:
+        mismatches.append(
+            "features:\n"
+            f"expected:\n{pformat(expected_features)}\n"
+            f"got:\n{pformat(actual_features)}"
+        )
+
+    if mismatches:
+        raise ValueError(
+            "Existing dataset metadata does not match this recording setup:\n"
+            + "\n".join(mismatches)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -110,11 +180,22 @@ def _connect_leader(robot_type: str, leader_port: str, leader_id: str):
     )
 
 
-def _create_dataset(repo_id: str, fps: int, robot_type: str, features: dict, controller):
-    """Create and return a LeRobotDataset, disconnecting *controller* on failure."""
+def _create_dataset(
+    repo_id: str,
+    fps: int,
+    robot_type: str,
+    features: dict,
+    controller,
+    append_existing_dataset: bool = False,
+):
+    """Create or load a LeRobotDataset, disconnecting *controller* on failure."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     try:
+        if append_existing_dataset:
+            dataset = LeRobotDataset(repo_id=repo_id)
+            _validate_existing_dataset_compatible(dataset, fps, robot_type, features)
+            return dataset
         return LeRobotDataset.create(
             repo_id=repo_id,
             fps=fps,
@@ -123,7 +204,8 @@ def _create_dataset(repo_id: str, fps: int, robot_type: str, features: dict, con
         )
     except Exception as exc:
         controller.disconnect()
-        raise RuntimeError(f"Failed to create dataset: {exc}") from exc
+        action = "load existing" if append_existing_dataset else "create"
+        raise RuntimeError(f"Failed to {action} dataset: {exc}") from exc
 
 
 def _run_init_worker(
@@ -144,6 +226,7 @@ def _run_init_worker(
     countdown: int,
     wrist_roll_offset_deg: float,
     field_selection: FieldSelection,
+    append_existing_dataset: bool,
 ) -> None:
     """Body of the background init worker."""
     joint_names = ROBOT_JOINT_NAMES[robot_type]
@@ -156,9 +239,20 @@ def _run_init_worker(
             leader_port,
             leader_id,
         )
-        print("Creating LeRobot dataset...")
+        print(
+            "Loading existing LeRobot dataset..."
+            if append_existing_dataset
+            else "Creating LeRobot dataset..."
+        )
         features = build_features(field_selection, joint_names, wrist_wh, overhead_wh)
-        dataset = _create_dataset(repo_id, fps, robot_type, features, controller)
+        dataset = _create_dataset(
+            repo_id,
+            fps,
+            robot_type,
+            features,
+            controller,
+            append_existing_dataset=append_existing_dataset,
+        )
         session.update(
             controller=controller,
             controller_type=controller_type,
@@ -175,6 +269,8 @@ def _run_init_worker(
             robot_type=robot_type,
             wrist_roll_offset_deg=wrist_roll_offset_deg,
             field_selection=field_selection,
+            append_existing_dataset=append_existing_dataset,
+            initial_episode_count=getattr(dataset, "num_episodes", 0),
         )
         print("Initialization complete.")
         init_state["done"] = True
@@ -203,6 +299,7 @@ def _cb_start_init(
     overhead_camera_width: float,
     overhead_camera_height: float,
     repo_id: str,
+    append_existing_dataset: bool,
     num_episodes: float,
     action_space: str,
     max_steps: float,
@@ -219,7 +316,12 @@ def _cb_start_init(
     num_ep_i, max_steps_i, countdown_i = int(num_episodes), int(max_steps), int(countdown)
     if max_steps_i < 1:
         raise gr.Error("Max Steps must be at least 1.")
-    repo_id_value = (repo_id or "").strip() or _default_repo_id(env_id)
+    repo_id_value = (repo_id or "").strip()
+    append_existing_dataset_value = bool(append_existing_dataset)
+    if append_existing_dataset_value and not repo_id_value:
+        raise gr.Error("Hugging Face Repo ID is required when appending to an existing dataset.")
+    if not repo_id_value:
+        repo_id_value = _default_repo_id(env_id)
     leader_id_value = (leader_id or "").strip() or leader_id_default
     controller_type_value = cast(ControllerKind, controller_type)
     field_selection = _build_field_selection(field_selection_value)
@@ -257,6 +359,7 @@ def _cb_start_init(
             countdown_i,
             float(wrist_roll_offset_deg),
             field_selection,
+            append_existing_dataset_value,
         ),
         daemon=True,
     ).start()
@@ -600,9 +703,14 @@ def _build_setup_screen(
 
     gr.Markdown("### Dataset & Storage")
     repo_id_input = gr.Textbox(
-        label="HuggingFace Repo ID (optional)",
+        label="Hugging Face Repo ID",
         placeholder="username/dataset-name",
-        info="Leave blank for local-only recording",
+        info="Leave blank for a new local-only recording. Required when appending.",
+    )
+    append_existing_dataset_input = gr.Checkbox(
+        value=False,
+        label="Append to existing Hugging Face dataset",
+        info="Load the repo above and save new episodes into the existing dataset.",
     )
     field_selection_input = gr.CheckboxGroup(
         choices=_OPTIONAL_FIELD_CHOICES,
@@ -646,6 +754,7 @@ def _build_setup_screen(
         num_episodes_input,
         leader_id_input,
         repo_id_input,
+        append_existing_dataset_input,
         fps_input,
         action_space_input,
         wrist_roll_offset_deg_input,
@@ -884,6 +993,7 @@ def main(
                     num_episodes_input,
                     leader_id_input,
                     repo_id_input,
+                    append_existing_dataset_input,
                     fps_input,
                     action_space_input,
                     wrist_roll_offset_deg_input,
@@ -944,6 +1054,7 @@ def main(
             overhead_camera_width_input,
             overhead_camera_height_input,
             repo_id_input,
+            append_existing_dataset_input,
             num_episodes_input,
             action_space_input,
             max_steps_input,

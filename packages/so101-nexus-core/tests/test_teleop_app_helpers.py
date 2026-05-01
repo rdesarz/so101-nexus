@@ -306,6 +306,136 @@ def test_create_dataset_returns_dataset_on_success(monkeypatch) -> None:
     assert seen["features"] == {"action": {}}
 
 
+def test_create_dataset_loads_existing_dataset_when_appending(monkeypatch) -> None:
+    """Append mode loads an existing LeRobotDataset instead of creating a new one."""
+    seen = {}
+
+    class _ExistingDataset:
+        fps = 30
+        features = {"action": {}}
+        meta = types.SimpleNamespace(robot_type="so101")
+
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+    fake_module = types.ModuleType("lerobot.datasets.lerobot_dataset")
+    fake_module.LeRobotDataset = _ExistingDataset  # type: ignore[attr-defined]
+
+    for name, mod in [
+        ("lerobot", types.ModuleType("lerobot")),
+        ("lerobot.datasets", types.ModuleType("lerobot.datasets")),
+        ("lerobot.datasets.lerobot_dataset", fake_module),
+    ]:
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    class _StubLeader:
+        def disconnect(self) -> None:
+            raise AssertionError("disconnect should not be called")
+
+    ds = _create_dataset(
+        "user/existing",
+        30,
+        "so101",
+        {"action": {}},
+        _StubLeader(),
+        append_existing_dataset=True,
+    )
+
+    assert isinstance(ds, _ExistingDataset)
+    assert seen == {"repo_id": "user/existing"}
+
+
+def test_create_dataset_allows_existing_video_info_when_appending(monkeypatch) -> None:
+    """LeRobot adds encoded-video info to saved datasets; it is not a schema mismatch."""
+    wrist_feature = {
+        "dtype": "video",
+        "shape": (480, 480, 3),
+        "names": {"axes": ["height", "width", "channels"]},
+    }
+
+    class _ExistingDataset:
+        fps = 30
+        features = {
+            WRIST_KEY: {
+                **wrist_feature,
+                "shape": [480, 480, 3],
+                "info": {
+                    "has_audio": False,
+                    "video.codec": "av1",
+                    "video.fps": 30,
+                },
+            },
+        }
+        meta = types.SimpleNamespace(robot_type="so101")
+
+        def __init__(self, **_kwargs):
+            pass
+
+    fake_module = types.ModuleType("lerobot.datasets.lerobot_dataset")
+    fake_module.LeRobotDataset = _ExistingDataset  # type: ignore[attr-defined]
+
+    for name, mod in [
+        ("lerobot", types.ModuleType("lerobot")),
+        ("lerobot.datasets", types.ModuleType("lerobot.datasets")),
+        ("lerobot.datasets.lerobot_dataset", fake_module),
+    ]:
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    class _StubLeader:
+        def disconnect(self) -> None:
+            raise AssertionError("disconnect should not be called")
+
+    ds = _create_dataset(
+        "user/existing",
+        30,
+        "so101",
+        {WRIST_KEY: wrist_feature},
+        _StubLeader(),
+        append_existing_dataset=True,
+    )
+
+    assert isinstance(ds, _ExistingDataset)
+
+
+def test_create_dataset_disconnects_on_existing_dataset_mismatch(monkeypatch) -> None:
+    """Append mode fails early if the existing dataset metadata is incompatible."""
+    disconnect_calls = {"n": 0}
+
+    class _ExistingDataset:
+        fps = 20
+        features = {"action": {}}
+        meta = types.SimpleNamespace(robot_type="so101")
+
+        def __init__(self, **_kwargs):
+            pass
+
+    fake_module = types.ModuleType("lerobot.datasets.lerobot_dataset")
+    fake_module.LeRobotDataset = _ExistingDataset  # type: ignore[attr-defined]
+
+    for name, mod in [
+        ("lerobot", types.ModuleType("lerobot")),
+        ("lerobot.datasets", types.ModuleType("lerobot.datasets")),
+        ("lerobot.datasets.lerobot_dataset", fake_module),
+    ]:
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    class _StubLeader:
+        def disconnect(self) -> None:
+            disconnect_calls["n"] += 1
+
+    with pytest.raises(RuntimeError, match="Failed to load existing dataset"):
+        _create_dataset(
+            "user/existing",
+            30,
+            "so101",
+            {"action": {}},
+            _StubLeader(),
+            append_existing_dataset=True,
+        )
+
+    assert disconnect_calls["n"] == 1
+
+
 def test_run_init_worker_keyboard_initializes_session_without_hardware(monkeypatch) -> None:
     """Smoke-test init wiring for keyboard control without touching real devices."""
 
@@ -349,6 +479,7 @@ def test_run_init_worker_keyboard_initializes_session_without_hardware(monkeypat
         countdown=0,
         wrist_roll_offset_deg=0.0,
         field_selection=_build_field_selection([]),
+        append_existing_dataset=False,
     )
 
     assert init_state["done"] is True
@@ -413,6 +544,7 @@ def test_start_init_callback_matches_gradio_input_order(monkeypatch) -> None:
         64,
         64,
         "",
+        False,
         1,
         "joint_pos",
         2,
@@ -423,3 +555,33 @@ def test_start_init_callback_matches_gradio_input_order(monkeypatch) -> None:
 
     assert result == {"selected": 1}
     assert seen == {"controller_type": "keyboard", "env_id": "MuJoCoReach-v1"}
+
+
+def test_start_init_requires_repo_id_when_appending(monkeypatch) -> None:
+    """Append mode needs an explicit target repo."""
+    monkeypatch.setitem(sys.modules, "gradio", _FakeGradio("gradio"))
+
+    with pytest.raises(_FakeGradio.Error, match="Repo ID is required"):
+        _cb_start_init(
+            {},
+            {},
+            "/dev/null",
+            "default_leader",
+            "MuJoCoReach-v1",
+            "keyboard",
+            "so101",
+            "",
+            30,
+            64,
+            64,
+            64,
+            64,
+            "",
+            True,
+            1,
+            "joint_pos",
+            2,
+            0,
+            0.0,
+            [],
+        )
