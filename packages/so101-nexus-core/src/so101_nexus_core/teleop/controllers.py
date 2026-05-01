@@ -93,13 +93,17 @@ class KeyboardController:
         with self._lock:
             return {f"{name}.pos": float(self._positions[name]) for name in self.joint_names}
 
+    def reset_positions(self) -> None:
+        """Reset all keyboard joint targets to their home position."""
+        with self._lock:
+            for name in self.joint_names:
+                self._positions[name] = 0.0
+
     def apply_key(self, key_name: str) -> None:
         """Apply one logical key press; useful for tests and non-pynput callers."""
         key_name = key_name.lower()
         if key_name == "space":
-            with self._lock:
-                for name in self.joint_names:
-                    self._positions[name] = 0.0
+            self.reset_positions()
             return
 
         binding = self.key_bindings.get(key_name)

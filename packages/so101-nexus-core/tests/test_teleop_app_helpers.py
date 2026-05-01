@@ -18,6 +18,7 @@ from so101_nexus_core.teleop.app import (
     _build_field_selection,
     _cb_approve_episode,
     _cb_discard_episode,
+    _cb_start_recording,
     _cb_start_init,
     _connect_controller,
     _connect_leader,
@@ -110,6 +111,49 @@ def test_approve_episode_shows_start_button_for_next_recording(monkeypatch) -> N
     assert result[4] == {"update": {}}
     assert dataset.save_calls == 1
     assert len(dataset.frames) == 1
+
+
+def test_start_recording_resets_keyboard_controller_before_thread(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "gradio", _FakeGradio("gradio"))
+
+    events: list[str] = []
+
+    class _Controller:
+        def reset_positions(self) -> None:
+            events.append("reset")
+
+    class _ImmediateThread:
+        def __init__(self, target, args, daemon=False):
+            self._target = target
+            self._args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self._target(*self._args)
+
+    def _fake_recording_thread(*_args) -> None:
+        events.append("record")
+
+    monkeypatch.setattr("so101_nexus_core.teleop.app.threading.Thread", _ImmediateThread)
+    monkeypatch.setattr("so101_nexus_core.teleop.app.recording_thread", _fake_recording_thread)
+
+    session = {
+        "state": RecordingState(num_episodes=1),
+        "controller_type": "keyboard",
+        "controller": _Controller(),
+        "env_id": "MuJoCoReach-v1",
+        "joint_names": ("shoulder_pan",),
+        "fps": 30,
+        "max_steps": 2,
+        "countdown": 0,
+        "wrist_roll_offset_deg": 0.0,
+        "wrist_wh": (64, 64),
+        "overhead_wh": (64, 64),
+    }
+
+    _cb_start_recording(session)
+
+    assert events == ["reset", "record"]
 
 
 def test_build_field_selection_all_keys() -> None:

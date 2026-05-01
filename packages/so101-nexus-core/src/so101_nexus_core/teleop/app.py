@@ -329,6 +329,8 @@ def _cb_start_recording(session: dict):
     s = session["state"]
     s.should_stop = False
     s.recording_finished = False
+    if session.get("controller_type") == "keyboard":
+        session["controller"].reset_positions()
     threading.Thread(
         target=recording_thread,
         args=(
