@@ -23,6 +23,7 @@ DEFAULT_KEY_BINDINGS: dict[str, tuple[str, float]] = {
     "q": ("shoulder_pan", 1.0),
     "a": ("shoulder_pan", -1.0),
     "w": ("shoulder_lift", 1.0),
+    "z": ("shoulder_lift", 1.0),  # French keyboard support
     "s": ("shoulder_lift", -1.0),
     "e": ("elbow_flex", 1.0),
     "d": ("elbow_flex", -1.0),
